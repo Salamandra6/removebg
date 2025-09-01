@@ -140,79 +140,103 @@ if uploaded_files:
                 use_container_width=True
             )
 
-        # ---------------------------
-        # Refinado con pincel
+                # ---------------------------
+        # Refinado con pincel (robusto + fondo RGB/NumPy)
         # ---------------------------
         with st.expander("✍️ Refinar máscara (pincel: verde = CONSERVAR, rojo = ELIMINAR)"):
-            # Inicializar buffers de refinado por archivo
-            h, w = orig_pil.size[1], orig_pil.size[0]
-            if file.name not in st.session_state.refine:
-                st.session_state.refine[file.name] = {
-                    "keep": np_bool_mask((h, w)),
-                    "remove": np_bool_mask((h, w)),
-                }
+            import numpy as np
 
-            br_col1, br_col2, br_col3 = st.columns([1, 1, 1])
-            with br_col1:
-                brush = st.slider("Tamaño pincel", 5, 120, 40, step=5)
-            with br_col2:
-                mode = st.radio("Modo de pincel", ["Conservar (verde)", "Eliminar (rojo)"], horizontal=True)
-            with br_col3:
-                clear = st.button("🧽 Borrar pinceladas", key=f"clear_{file.name}")
+            # Tamaño original
+            orig_w, orig_h = orig_pil.size
 
-            # Reset de pinceladas
+            # Redimensiono el lienzo para hacerlo fluido
+            CANVAS_MAX_W = 1024
+            if orig_w > CANVAS_MAX_W:
+                canvas_w = CANVAS_MAX_W
+                canvas_h = int(orig_h * (CANVAS_MAX_W / orig_w))
+            else:
+                canvas_w, canvas_h = orig_w, orig_h
+
+            # Imagen para el canvas: RGB + NumPy (lo más compatible)
+            canvas_bg = orig_pil if (orig_w == canvas_w) else orig_pil.resize((canvas_w, canvas_h), Image.LANCZOS)
+            canvas_bg_rgb = canvas_bg.convert("RGB")
+            bg_np = np.array(canvas_bg_rgb)  # (H, W, 3)
+
+            # Estado por archivo en resolución del lienzo
+            def _zeros():
+                return np.zeros((canvas_h, canvas_w), dtype=bool)
+
+            key_base = file.name
+            state_key = f"refine_{key_base}"
+            if state_key not in st.session_state:
+                st.session_state[state_key] = {"keep": _zeros(), "remove": _zeros()}
+
+            cA, cB, cC = st.columns([1, 1, 1])
+            with cA:
+                brush = st.slider("Tamaño pincel", 5, 120, 30, step=5)
+            with cB:
+                mode = st.radio("Modo de pincel", ["Conservar (verde)", "Eliminar (rojo)"], horizontal=True, index=0)
+            with cC:
+                clear = st.button("🧽 Borrar pinceladas", key=f"clear_{key_base}")
+
             if clear:
-                st.session_state.refine[file.name]["keep"][:] = False
-                st.session_state.refine[file.name]["remove"][:] = False
-                st.experimental_rerun()
+                st.session_state[state_key]["keep"][:] = False
+                st.session_state[state_key]["remove"][:] = False
+                st.rerun()
 
             draw_color = "#00FF00" if "Conservar" in mode else "#FF0000"
 
-            st.write("Dibuja sobre la imagen (usa el mouse o dedo).")
-            # Usamos tamaño ORIGINAL para no tener que reescalar la máscara
+            st.write("Dibuja sobre la imagen (si no aparece, mira el canvas de prueba más abajo).")
+
+            # Canvas principal (con fondo RGB/NumPy)
             canvas_result = st_canvas(
                 fill_color="rgba(0,0,0,0)",
-                stroke_width=brush,
+                stroke_width=int(brush),
                 stroke_color=draw_color,
-                background_image=orig_pil,
-                height=orig_pil.height,
-                width=orig_pil.width,
+                background_color="#00000000",
+                background_image=bg_np,               # <- NumPy RGB
+                height=bg_np.shape[0],
+                width=bg_np.shape[1],
                 drawing_mode="freedraw",
-                key=f"canvas_{file.name}"
+                update_streamlit=True,
+                display_toolbar=True,
+                key=f"canvas_{key_base}",
             )
 
-            # Tomar las pinceladas y actualizarlas en máscaras keep/remove
+            # Tomo los trazos del canvas
             if canvas_result.image_data is not None:
-                arr = canvas_result.image_data  # (H, W, 4) RGBA, solo strokes
-                arr = arr.astype(np.uint8)
-
+                arr = canvas_result.image_data.astype("uint8")  # (H,W,4)
                 alpha = arr[:, :, 3] > 0
-
-                # Detectar color de trazo por canales (verde y rojo puros)
                 is_green = (arr[:, :, 1] > 200) & (arr[:, :, 0] < 50) & (arr[:, :, 2] < 50) & alpha
                 is_red   = (arr[:, :, 0] > 200) & (arr[:, :, 1] < 50) & (arr[:, :, 2] < 50) & alpha
 
-                ref = st.session_state.refine[file.name]
-                # Acumular (no se pierden trazos previos)
-                ref["keep"] |= is_green
-                ref["remove"] |= is_red
+                st.session_state[state_key]["keep"] |= is_green
+                st.session_state[state_key]["remove"] |= is_red
 
-            # Botón para aplicar refinado
-            if st.button("✅ Aplicar refinado a esta imagen", key=f"apply_{file.name}"):
-                ref = st.session_state.refine[file.name]
+            # Aplicar refinado
+            if st.button("✅ Aplicar refinado a esta imagen", key=f"apply_{key_base}"):
+                ref = st.session_state[state_key]
 
-                # Máscara base de IA → bool
-                base = np.array(mask_L, dtype=np.uint8)
+                # Reescalar (canvas -> original)
+                def to_orig(mask_small: np.ndarray) -> Image.Image:
+                    m = (mask_small * 255).astype("uint8")
+                    m_img = Image.fromarray(m, mode="L")
+                    if (canvas_w, canvas_h) != (orig_w, orig_h):
+                        m_img = m_img.resize((orig_w, orig_h), Image.NEAREST)
+                    return m_img
+
+                keep_L_orig   = to_orig(ref["keep"])
+                remove_L_orig = to_orig(ref["remove"])
+
+                base = np.array(mask_L.resize((orig_w, orig_h), Image.NEAREST), dtype="uint8")
                 fg_bool = base >= 128
 
-                # Aplicar correcciones
-                fg_bool[ref["keep"]] = True
-                fg_bool[ref["remove"]] = False
+                keep_bool   = np.array(keep_L_orig, dtype="uint8") >= 128
+                remove_bool = np.array(remove_L_orig, dtype="uint8") >= 128
 
-                refined_mask = (fg_bool * 255).astype(np.uint8)
-                refined_mask_L = Image.fromarray(refined_mask, mode="L")
+                fg_bool = (fg_bool | keep_bool) & (~remove_bool)
+                refined_mask_L = Image.fromarray((fg_bool * 255).astype("uint8"), mode="L")
 
-                # Re-componer y mostrar
                 refined_bytes = compose_on_background(orig_pil, refined_mask_L, bg_color, max_width)
                 refined_pil = Image.open(io.BytesIO(refined_bytes)); refined_pil.load()
 
@@ -225,7 +249,17 @@ if uploaded_files:
                     use_container_width=True
                 )
 
-        st.divider()
-
-else:
-    st.info("Sube una o varias imágenes para comenzar. El modelo de IA se cargará al procesar la primera.")
+            # Canvas de prueba (por si el principal no aparece)
+            with st.expander("🧪 Canvas de prueba (deberías poder pintar aquí)"):
+                _test = st_canvas(
+                    fill_color="rgba(255,0,0,0.2)",
+                    stroke_width=20,
+                    stroke_color="#00FF00",
+                    background_color="#FFFFFF",
+                    height=250,
+                    width=350,
+                    drawing_mode="freedraw",
+                    update_streamlit=True,
+                    display_toolbar=True,
+                    key=f"debug_canvas_{key_base}",
+                )
