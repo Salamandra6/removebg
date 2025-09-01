@@ -157,10 +157,9 @@ if uploaded_files:
             else:
                 canvas_w, canvas_h = orig_w, orig_h
 
-            # Imagen para el canvas: RGB + NumPy (lo más compatible)
+            # Imagen para el canvas: 
             canvas_bg = orig_pil if (orig_w == canvas_w) else orig_pil.resize((canvas_w, canvas_h), Image.LANCZOS)
-            canvas_bg_rgb = canvas_bg.convert("RGB")
-            bg_np = np.array(canvas_bg_rgb)  # (H, W, 3)
+canvas_bg_rgb = canvas_bg.convert("RGB")  # PIL.Image
 
             # Estado por archivo en resolución del lienzo
             def _zeros():
@@ -190,18 +189,18 @@ if uploaded_files:
 
             # Canvas principal (con fondo RGB/NumPy)
             canvas_result = st_canvas(
-                fill_color="rgba(0,0,0,0)",
-                stroke_width=int(brush),
-                stroke_color=draw_color,
-                background_color="#00000000",
-                background_image=bg_np,               # <- NumPy RGB
-                height=bg_np.shape[0],
-                width=bg_np.shape[1],
-                drawing_mode="freedraw",
-                update_streamlit=True,
-                display_toolbar=True,
-                key=f"canvas_{key_base}",
-            )
+    fill_color="rgba(0,0,0,0)",
+    stroke_width=int(brush),
+    stroke_color=draw_color,
+    background_color="#00000000",
+    background_image=canvas_bg_rgb,       # <-- PIL: OK
+    height=canvas_h,
+    width=canvas_w,
+    drawing_mode="freedraw",
+    update_streamlit=True,
+    display_toolbar=True,
+    key=f"canvas_{key_base}",
+)
 
             # Tomo los trazos del canvas
             if canvas_result.image_data is not None:
@@ -263,3 +262,4 @@ if uploaded_files:
                     display_toolbar=True,
                     key=f"debug_canvas_{key_base}",
                 )
+
