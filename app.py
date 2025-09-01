@@ -9,38 +9,34 @@ from rembg import remove, new_session
 from streamlit_drawable_canvas import st_canvas
 
 
-# ---------------------------
-# Configuración de la página
-# ---------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Configuración
+# ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Quitar fondo → Fondo blanco", page_icon="🖼️", layout="wide")
 st.title("🖼️ Quitar fondo y refinar con pincel")
 st.caption("IA para quitar fondo + refinado manual: pinta verde para CONSERVAR y rojo para ELIMINAR.")
 
 
-# ---------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 # Estado para refinado
-# ---------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 if "refine" not in st.session_state:
-    # Guarda pinceladas por archivo y a resolución del lienzo
     st.session_state.refine: Dict[str, Dict[str, np.ndarray]] = {}
 
 
-# ---------------------------
-# Carga diferida del modelo (cacheado)
-# ---------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Modelo (carga diferida y cacheado)
+# ──────────────────────────────────────────────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def _create_session(model_name: str = "u2net"):
     return new_session(model_name)
 
-def get_session():
-    return _create_session("u2net")
-
 @st.cache_data(show_spinner=False)
 def get_rgba_and_mask(file_bytes: bytes, model_name: str = "u2net") -> Tuple[Image.Image, Image.Image]:
     """
-    Ejecuta rembg una vez y devuelve:
-    - fg_rgba: foreground RGBA (PIL)
-    - mask_L: máscara (canal alfa) en modo "L"
+    Ejecuta rembg y devuelve:
+      - fg_rgba: imagen RGBA con alfa (PIL)
+      - mask_L: canal alfa como máscara (PIL mode 'L')
     """
     session = _create_session(model_name)
     out_bytes = remove(file_bytes, session=session)
@@ -48,12 +44,11 @@ def get_rgba_and_mask(file_bytes: bytes, model_name: str = "u2net") -> Tuple[Ima
     mask_L = fg_rgba.split()[3]
     return fg_rgba, mask_L
 
-def compose_on_background(orig_rgb: Image.Image, mask_L: Image.Image, bg_rgb: Tuple[int, int, int], max_width: int) -> bytes:
+def compose_on_background(orig_rgb: Image.Image, mask_L: Image.Image,
+                          bg_rgb: Tuple[int, int, int], max_width: int) -> bytes:
     """
-    Compone la imagen original (RGB) sobre un fondo de color usando la máscara dada.
-    Devuelve PNG en bytes.
+    Pega orig_rgb sobre un color sólido usando mask_L. Devuelve PNG en bytes.
     """
-    # Redimensionar si corresponde
     if isinstance(max_width, int) and max_width > 0:
         w, h = orig_rgb.size
         if w > max_width:
@@ -64,15 +59,15 @@ def compose_on_background(orig_rgb: Image.Image, mask_L: Image.Image, bg_rgb: Tu
     bg = Image.new("RGB", orig_rgb.size, bg_rgb)
     bg.paste(orig_rgb, mask=mask_L)
 
-    out_buf = io.BytesIO()
-    bg.save(out_buf, format="PNG")
-    out_buf.seek(0)
-    return out_buf.read()
+    buf = io.BytesIO()
+    bg.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.read()
 
 
-# ---------------------------
-# Sidebar (opciones)
-# ---------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Sidebar
+# ──────────────────────────────────────────────────────────────────────────────
 st.sidebar.header("Opciones")
 use_custom = st.sidebar.toggle("Usar color de fondo personalizado", value=False)
 bg_color = (255, 255, 255)
@@ -85,13 +80,12 @@ max_width = st.sidebar.number_input(
     min_value=0, max_value=8000, value=0, step=50,
     help="Si es mayor que 0, redimensiona manteniendo proporción."
 )
+st.sidebar.info("Si la IA 'muerde' hombros/pelo, usa el refinado con pincel en cada imagen.")
 
-st.sidebar.info("Si la IA 'muerde' hombros o pelo, usa el refinado con pincel en la tarjeta de cada imagen.")
 
-
-# ---------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 # Carga de archivos
-# ---------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 uploaded_files = st.file_uploader(
     "Arrastra o selecciona una o varias imágenes",
     type=["png", "jpg", "jpeg", "webp"],
@@ -99,12 +93,12 @@ uploaded_files = st.file_uploader(
 )
 
 
-# ---------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 # Procesamiento
-# ---------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 if uploaded_files:
     for file in uploaded_files:
-        # Leer bytes y validar imagen
+        # Leer bytes y validar
         try:
             file_bytes = file.getvalue()
             orig_pil = Image.open(io.BytesIO(file_bytes)).convert("RGB")
@@ -113,32 +107,31 @@ if uploaded_files:
             st.error(f"Archivo inválido o no soportado ({file.name}): {e}")
             continue
 
-        # Ejecutar rembg y obtener máscara
+        # Ejecutar rembg (cacheado)
         with st.spinner(f"Procesando {file.name}… (la primera imagen puede tardar por carga del modelo)"):
             fg_rgba, mask_L = get_rgba_and_mask(file_bytes)
 
-        # Composición inicial con fondo
+        # Resultado inicial
         out_bytes = compose_on_background(orig_pil, mask_L, bg_color, max_width)
         res_pil = Image.open(io.BytesIO(out_bytes)); res_pil.load()
 
-        # Mostrar original y resultado
         st.markdown(f"### 📷 {file.name}")
-        c1, c2 = st.columns([1, 1])
-        with c1:
+        col1, col2 = st.columns([1, 1])
+        with col1:
             st.image(orig_pil, caption="Original", use_column_width=True)
-        with c2:
+        with col2:
             st.image(res_pil, caption=f"Resultado (fondo {'personalizado' if use_custom else 'blanco'})", use_column_width=True)
             st.download_button(
-                label="⬇️ Descargar PNG",
+                "⬇️ Descargar PNG",
                 data=out_bytes,
                 file_name=f"bg_{file.name.rsplit('.', 1)[0]}.png",
                 mime="image/png",
                 use_container_width=True
             )
 
-        # ---------------------------
-        # Refinado con pincel
-        # ---------------------------
+        # ──────────────────────────────────────────────────────────────────────
+        # EXPANDER: Refinado con pincel
+        # ──────────────────────────────────────────────────────────────────────
         with st.expander("✍️ Refinar máscara (pincel: verde = CONSERVAR, rojo = ELIMINAR)"):
             # Tamaños
             orig_w, orig_h = orig_pil.size
@@ -149,40 +142,39 @@ if uploaded_files:
             else:
                 canvas_w, canvas_h = orig_w, orig_h
 
-            # Imagen para el canvas (PIL RGB). Importante: PIL, no NumPy.
+            # Imagen de fondo del canvas (PIL RGB a la escala del lienzo)
             canvas_bg = orig_pil if (orig_w == canvas_w) else orig_pil.resize((canvas_w, canvas_h), Image.LANCZOS)
             canvas_bg_rgb = canvas_bg.convert("RGB")
+            bg_np_for_diff = np.array(canvas_bg_rgb)  # usado para detectar trazos por diferencia
 
             # Estado por archivo a resolución del lienzo
-            def _zeros(h: int, w: int) -> np.ndarray:
+            def zeros_hw(h: int, w: int) -> np.ndarray:
                 return np.zeros((h, w), dtype=bool)
 
             key_base = file.name
             state_key = f"refine_{key_base}"
             if state_key not in st.session_state:
                 st.session_state[state_key] = {
-                    "keep": _zeros(canvas_h, canvas_w),
-                    "remove": _zeros(canvas_h, canvas_w),
+                    "keep": zeros_hw(canvas_h, canvas_w),
+                    "remove": zeros_hw(canvas_h, canvas_w),
                 }
 
-            cA, cB, cC = st.columns([1, 1, 1])
-            with cA:
+            a, b, c = st.columns([1, 1, 1])
+            with a:
                 brush = st.slider("Tamaño pincel", 5, 120, 30, step=5)
-            with cB:
-                mode = st.radio("Modo de pincel", ["Conservar (verde)", "Eliminar (rojo)"], horizontal=True, index=0)
-            with cC:
-                clear = st.button("🧽 Borrar pinceladas", key=f"clear_{key_base}")
-
-            if clear:
-                st.session_state[state_key]["keep"][:] = False
-                st.session_state[state_key]["remove"][:] = False
-                st.rerun()
+            with b:
+                mode = st.radio("Modo de pincel", ["Conservar (verde)", "Eliminar (rojo)"],
+                                horizontal=True, index=0)
+            with c:
+                if st.button("🧽 Borrar pinceladas", key=f"clear_{key_base}"):
+                    st.session_state[state_key]["keep"][:] = False
+                    st.session_state[state_key]["remove"][:] = False
+                    st.rerun()
 
             draw_color = "#00FF00" if "Conservar" in mode else "#FF0000"
+            st.write("Dibuja sobre la imagen. Si el lienzo no aparece, reduce el tamaño del pincel.")
 
-            st.write("Dibuja sobre la imagen. Si el lienzo no aparece, baja el tamaño del pincel o prueba el canvas de prueba.")
-
-            # Canvas principal (PIL como background_image)
+            # Canvas principal — usa PIL como background_image (no NumPy)
             canvas_result = st_canvas(
                 fill_color="rgba(0,0,0,0)",
                 stroke_width=int(brush),
@@ -197,12 +189,16 @@ if uploaded_files:
                 key=f"canvas_{key_base}",
             )
 
-            # Capturar trazos
+            # Extraer pinceladas: comparamos contra el fondo (diferencia RGB)
             if canvas_result.image_data is not None:
-                arr = canvas_result.image_data.astype("uint8")  # (H, W, 4)
-                alpha = arr[:, :, 3] > 0
-                is_green = (arr[:, :, 1] > 200) & (arr[:, :, 0] < 50) & (arr[:, :, 2] < 50) & alpha
-                is_red   = (arr[:, :, 0] > 200) & (arr[:, :, 1] < 50) & (arr[:, :, 2] < 50) & alpha
+                arr = canvas_result.image_data.astype("uint8")  # (H,W,4)
+                rgb = arr[:, :, :3]
+                # Dónde hay diferencia vs la imagen de fondo → son trazos
+                diff = np.any(rgb != bg_np_for_diff, axis=2)
+
+                # Clasificar por color (verde / rojo) con margen
+                is_green = diff & (rgb[:, :, 1] > rgb[:, :, 0] + 50) & (rgb[:, :, 1] > rgb[:, :, 2] + 50) & (rgb[:, :, 1] > 150)
+                is_red   = diff & (rgb[:, :, 0] > rgb[:, :, 1] + 50) & (rgb[:, :, 0] > rgb[:, :, 2] + 50) & (rgb[:, :, 0] > 150)
 
                 st.session_state[state_key]["keep"] |= is_green
                 st.session_state[state_key]["remove"] |= is_red
@@ -211,7 +207,7 @@ if uploaded_files:
             if st.button("✅ Aplicar refinado a esta imagen", key=f"apply_{key_base}"):
                 ref = st.session_state[state_key]
 
-                # Reescalar pinceladas del tamaño del lienzo al tamaño original
+                # Reescalar (lienzo → original)
                 def to_orig(mask_small: np.ndarray) -> Image.Image:
                     m = (mask_small * 255).astype("uint8")
                     m_img = Image.fromarray(m, mode="L")
@@ -222,11 +218,11 @@ if uploaded_files:
                 keep_L_orig   = to_orig(ref["keep"])
                 remove_L_orig = to_orig(ref["remove"])
 
-                # Máscara base (IA) a tamaño original
+                # Máscara base de IA a tamaño original
                 base = np.array(mask_L.resize((orig_w, orig_h), Image.NEAREST), dtype="uint8")
                 fg_bool = base >= 128
 
-                # Aplicar correcciones
+                # Aplica correcciones
                 keep_bool   = np.array(keep_L_orig, dtype="uint8") >= 128
                 remove_bool = np.array(remove_L_orig, dtype="uint8") >= 128
                 fg_bool = (fg_bool | keep_bool) & (~remove_bool)
@@ -245,20 +241,21 @@ if uploaded_files:
                     use_container_width=True
                 )
 
-            # Canvas de prueba (por si el principal no aparece)
-            with st.expander("🧪 Canvas de prueba (pinta aquí para comprobar)"):
-                _ = st_canvas(
-                    fill_color="rgba(255,0,0,0.2)",
-                    stroke_width=20,
-                    stroke_color="#00FF00",
-                    background_color="#FFFFFF",
-                    height=250,
-                    width=350,
-                    drawing_mode="freedraw",
-                    update_streamlit=True,
-                    display_toolbar=True,
-                    key=f"debug_canvas_{key_base}",
-                )
+        # Canvas de prueba (NO dentro de expander para evitar anidar)
+        show_debug = st.checkbox("🧪 Mostrar canvas de prueba", key=f"debug_toggle_{file.name}")
+        if show_debug:
+            st_canvas(
+                fill_color="rgba(255,0,0,0.2)",
+                stroke_width=20,
+                stroke_color="#00FF00",
+                background_color="#FFFFFF",
+                height=250,
+                width=350,
+                drawing_mode="freedraw",
+                update_streamlit=True,
+                display_toolbar=True,
+                key=f"debug_canvas_{file.name}",
+            )
 
         st.divider()
 
