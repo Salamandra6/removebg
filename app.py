@@ -97,19 +97,40 @@ if uploaded_files:
     with col_right:
         st.subheader(f"Procesadas (fondo {'personalizado' if use_custom else 'blanco'})")
 
-    results_for_zip: List[Tuple[str, bytes]] = []
+    results_for_zip = []
 
     for file in uploaded_files:
-        original_bytes = file.read()
+        # Leer bytes de manera segura
+        try:
+            file_bytes = file.getvalue()  # más estable que .read()
+        except Exception as e:
+            st.error(f"No pude leer {file.name}: {e}")
+            continue
 
-        with st.spinner(f"Procesando {file.name}..."):
-            out_bytes = compose_on_bg(original_bytes, bg_color, max_width)
+        # Validar que realmente es imagen decodificable
+        try:
+            orig_pil = Image.open(io.BytesIO(file_bytes))
+            orig_pil.load()  # fuerza la decodificación
+        except Exception as e:
+            st.error(f"Archivo inválido o no soportado ({file.name}): {e}")
+            continue
+
+        with st.spinner(f"Procesando {file.name}… (la primera imagen puede tardar por carga del modelo)"):
+            out_bytes = compose_on_bg(file_bytes, bg_color, max_width)
+
+        # Mostrar usando PIL (evita problemas de tipo)
+        try:
+            res_pil = Image.open(io.BytesIO(out_bytes))
+            res_pil.load()
+        except Exception as e:
+            st.error(f"Error al abrir el resultado de {file.name}: {e}")
+            continue
 
         c1, c2 = st.columns([1, 1])
         with c1:
-            st.image(original_bytes, caption=f"Original: {file.name}", use_container_width=True)
+            st.image(orig_pil, caption=f"Original: {file.name}", use_container_width=True)
         with c2:
-            st.image(out_bytes, caption=f"Resultado: {file.name}", use_container_width=True)
+            st.image(res_pil, caption=f"Resultado: {file.name}", use_container_width=True)
             st.download_button(
                 label="⬇️ Descargar PNG procesado",
                 data=out_bytes,
@@ -137,4 +158,6 @@ if uploaded_files:
             use_container_width=True
         )
 else:
-    st.info("Sube una o varias imágenes para comenzar.")
+    st.info("Sube una o varias imágenes para comenzar. El modelo de IA se cargará cuando procese la primera imagen.")
+
+
