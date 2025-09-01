@@ -128,9 +128,9 @@ if uploaded_files:
 
         c1, c2 = st.columns([1, 1])
         with c1:
-            st.image(orig_pil, caption=f"Original: {file.name}", use_container_width=True)
+            st.image(orig_pil, caption=f"Original: {file.name}", use_column_width=True)
         with c2:
-            st.image(res_pil, caption=f"Resultado: {file.name}", use_container_width=True)
+            st.image(res_pil, caption=f"Resultado: {file.name}", use_column_width=True)
             st.download_button(
                 label="⬇️ Descargar PNG procesado",
                 data=out_bytes,
@@ -159,5 +159,6 @@ if uploaded_files:
         )
 else:
     st.info("Sube una o varias imágenes para comenzar. El modelo de IA se cargará cuando procese la primera imagen.")
+
 
 
